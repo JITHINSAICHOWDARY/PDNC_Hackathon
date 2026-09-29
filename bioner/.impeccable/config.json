@@ -1,0 +1,26 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "cream-palette",
+        "value": "*",
+        "files": [
+          "bioner/frontend/index.html"
+        ],
+        "createdAt": "2026-09-29T02:51:50.120Z",
+        "reason": "user requested a light Lannister parchment theme with no harsh colours and iterated on it in this session"
+      },
+      {
+        "rule": "all-caps-body",
+        "value": "*",
+        "files": [
+          "bioner/frontend/index.html"
+        ],
+        "createdAt": "2026-09-29T02:51:50.137Z",
+        "reason": "uppercase only on short Cinzel labels (section titles, tabs, table headers, axis captions); body text is sentence case"
+      }
+    ]
+  }
+}

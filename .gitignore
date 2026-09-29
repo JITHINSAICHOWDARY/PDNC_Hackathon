@@ -1,0 +1,7 @@
+checkpoints.zip
+*.zip
+*.pt
+*.pth
+*.h5
+__pycache__/
+.DS_Store

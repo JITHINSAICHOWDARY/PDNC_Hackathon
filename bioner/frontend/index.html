@@ -1,0 +1,435 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lannister BioNER</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700&family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+<style>
+  /* House Lannister, light: ivory parchment, dusty rose, old gold. Light theme only, no dark fills. */
+  :root {
+    color-scheme: light;
+    --parchment: #f6efe1;  --paper: #fffcf4;  --paper-2: #faf4e7;
+    --rule: #dcc9a0;       --rule-2: #ebdfc4;
+    --ink: #2e241d;        --ink-2: #5a4a3c;  --muted: #6f604f;
+    --crimson: #d49a8e;    --crimson-ink: #8c4f45;  --crimson-soft: #f6e4dd;   /* rose: marks / text / tint */
+    --gold: #b8913a;       --gold-soft: #f3e6c3;    --gold-ink: #7a5a1c;
+    --heat-lo: #faf3e6;    --heat-hi: #c98476;      /* sequential scale: P = 0 -> P = 1 */
+    --display: "Cinzel", "Trajan Pro", Georgia, serif;
+    --serif: "EB Garamond", Garamond, Georgia, serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; color: var(--ink); font: 17px/1.5 var(--serif);
+    background-color: var(--parchment);
+    /* paper grain (SVG noise) + soft warm vignette */
+    background-image:
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .45 0 0 0 0 .35 0 0 0 0 .2 0 0 0 .07 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"),
+      radial-gradient(ellipse at 50% 0%, #fbf6ea 0%, var(--parchment) 55%, #efe4cd 100%);
+    background-attachment: fixed;
+    min-height: 100vh;
+  }
+  /* Casterly Rock on the horizon: fixed backdrop behind everything */
+  .backdrop { position: fixed; left: 0; right: 0; bottom: 0; height: 240px; z-index: -1; pointer-events: none; }
+  .backdrop svg { width: 100%; height: 100%; display: block; }
+
+  main { max-width: 1120px; margin: 0 auto; padding: 0 16px 200px; }
+
+  /* Banner header */
+  .banner { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px 28px; padding: 28px 0 22px; border-bottom: 1px solid var(--rule); margin-bottom: 26px; position: relative; }
+  .banner::after { content: ""; position: absolute; left: 0; right: 0; bottom: -5px; border-bottom: 1px solid var(--rule-2); }
+  .house { display: flex; align-items: center; gap: 16px; }
+  .crest { width: 64px; height: 78px; flex: none; }
+  .house h1 { font: 700 26px/1.1 var(--display); letter-spacing: .08em; margin: 0; color: var(--crimson-ink); }
+  .house .sub { margin: 4px 0 0; color: var(--ink-2); font-size: 16px; }
+  .house .motto { font-style: italic; color: var(--gold-ink); }
+
+  .raven { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .raven label { font: 600 11px var(--display); letter-spacing: .14em; text-transform: uppercase; color: var(--muted); width: 100%; }
+  input[type=url], textarea { font: inherit; color: var(--ink); background: var(--paper); border: 1px solid var(--rule); border-radius: 2px; padding: 8px 10px; }
+  input[type=url] { width: min(340px, 100%); font-size: 15px; }
+  textarea { width: 100%; min-height: 88px; resize: vertical; font-size: 18px; line-height: 1.5; }
+  input:focus, textarea:focus, button:focus-visible { outline: 2px solid var(--gold); outline-offset: 1px; }
+  button { font: inherit; cursor: pointer; }
+  .btn { font: 600 13px var(--display); letter-spacing: .1em; text-transform: uppercase; padding: 9px 16px; border-radius: 2px; border: 1px solid var(--rule); background: var(--paper); color: var(--ink); }
+  .btn:hover { border-color: var(--gold); }
+  .btn.primary { background: #f5e1da; border-color: #dcaa9e; color: var(--crimson-ink); }
+  .btn.primary:hover { background: #f0d5cb; border-color: var(--crimson); }
+  .btn.primary:disabled { opacity: .6; cursor: wait; }
+  .status { display: inline-flex; align-items: center; gap: 6px; font-size: 15px; color: var(--ink-2); font-style: italic; }
+  .dot { width: 9px; height: 9px; transform: rotate(45deg); background: var(--rule); }
+  .dot.on { background: var(--gold); }
+
+  /* Panels: paper with a gold double rule */
+  .panel { position: relative; background: var(--paper); border: 1px solid var(--rule); border-radius: 3px; padding: 26px 28px 24px; margin-bottom: 22px; box-shadow: 0 1px 0 rgba(120,90,40,.06), 0 10px 24px -18px rgba(90,60,20,.25); }
+  .panel::before { content: ""; position: absolute; inset: 5px; border: 1px solid var(--rule-2); pointer-events: none; }
+  .panel > * { position: relative; }
+  h2 { display: flex; align-items: center; gap: 12px; font: 600 15px var(--display); letter-spacing: .14em; text-transform: uppercase; color: var(--crimson-ink); margin: 0 0 4px; }
+  h2::after { content: ""; flex: 1; height: 1px; background: linear-gradient(90deg, var(--rule), transparent); }
+  h2 .note { font: italic 400 16px var(--serif); letter-spacing: 0; text-transform: none; color: var(--muted); }
+  .lede { margin: 0 0 16px; color: var(--ink-2); font-style: italic; }
+  .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  .muted { color: var(--muted); font-size: 15px; }
+  .error { color: var(--crimson-ink); background: var(--crimson-soft); border: 1px solid #e6cdc4; border-radius: 2px; padding: 8px 12px; margin-top: 14px; }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 6px 8px; margin: 12px 0 16px; }
+  .chip { font: italic 15px var(--serif); padding: 3px 12px; border-radius: 2px; background: var(--paper-2); border: 1px solid var(--rule-2); color: var(--ink-2); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chip:hover { border-color: var(--gold); color: var(--ink); background: var(--gold-soft); }
+  .seg { display: inline-flex; gap: 22px; border-bottom: 1px solid var(--rule-2); }
+  .seg button { border: 0; background: none; padding: 6px 0 7px; font: 600 13px var(--display); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px; }
+  .seg button[aria-pressed=true] { color: var(--crimson-ink); border-bottom-color: var(--crimson); }
+  .seg button:hover { color: var(--ink); }
+
+  /* Sentence: each word with its BIO tag underneath */
+  .sent { display: flex; flex-wrap: wrap; row-gap: 12px; margin-top: 12px; }
+  .tok { display: inline-flex; flex-direction: column; align-items: center; padding: 2px 5px; margin-right: 2px; border: 1.5px solid transparent; border-radius: 2px; }
+  .tok .w { font-size: 20px; }
+  .tok .t { font: 600 11px var(--display); letter-spacing: .08em; color: var(--muted); margin-top: 1px; }
+  .tok.ent { background: var(--gold-soft); }
+  .tok.ent .w { border-bottom: 2px solid var(--crimson); }
+  .tok.ent .t { color: var(--crimson-ink); }
+  .tok.ent.mid, .tok.ent.first:not(.last) { margin-right: 0; }
+  .tok.diff { border: 1.5px dashed var(--gold-ink); }
+  .ents { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+  .ent-chip { font-size: 16px; background: var(--crimson-soft); color: var(--crimson-ink); border: 1px solid #e6cdc4; border-radius: 2px; padding: 2px 10px; }
+  .ent-chip b { font-weight: 600; font-variant-numeric: tabular-nums; margin-left: 8px; }
+  .hint { margin: 14px 0 0; color: var(--muted); font-size: 15px; font-style: italic; }
+
+  /* The span ledger: heatmap + candidate table */
+  .span-view { display: flex; flex-wrap: wrap; gap: 22px 32px; margin-top: 14px; }
+  .span-view > .hm { flex: 0 1 auto; min-width: 0; max-width: 100%; }
+  .span-view > .tb { flex: 1 1 380px; min-width: 0; }
+  .scroll { overflow-x: auto; padding-bottom: 6px; }
+  .heat { display: grid; gap: 2px; font-size: 14px; width: max-content; }
+  .heat .cl { writing-mode: vertical-rl; transform: rotate(180deg); color: var(--ink-2); padding: 2px 0; max-height: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; justify-self: center; }
+  .heat .rl { color: var(--ink-2); text-align: right; padding-right: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 120px; align-self: center; }
+  .heat .c { width: 21px; height: 21px; border-radius: 1px; }
+  .heat .c.v:hover { outline: 2px solid var(--ink); outline-offset: -1px; }
+  .heat .c.sel { box-shadow: inset 0 0 0 2px var(--paper), 0 0 0 2px var(--gold); }
+  .heat .c.na { background: transparent; }
+  .axis { font: 600 11px var(--display); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); margin: 4px 0 10px; }
+  .legend { display: flex; align-items: center; gap: 8px; font-size: 15px; color: var(--ink-2); margin-top: 12px; flex-wrap: wrap; }
+  .ramp { position: relative; width: 170px; height: 10px; border: 1px solid var(--rule-2); background: linear-gradient(90deg, var(--heat-lo), var(--heat-hi)); }
+  .ramp i { position: absolute; top: -5px; width: 2px; height: 18px; background: var(--ink); }
+  .swatch-sel { width: 14px; height: 14px; box-shadow: inset 0 0 0 2px var(--paper), 0 0 0 2px var(--gold); background: var(--heat-hi); }
+
+  table { width: 100%; border-collapse: collapse; font-size: 16px; }
+  th { text-align: left; font: 600 11px var(--display); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); padding: 6px; border-bottom: 1px solid var(--rule); }
+  td { padding: 7px 6px; border-bottom: 1px solid var(--rule-2); vertical-align: middle; }
+  td.num { font-variant-numeric: tabular-nums lining-nums; text-align: right; color: var(--ink-2); width: 44px; }
+  td .muted { font-size: 13px; font-style: italic; }
+  .bar { height: 7px; background: var(--crimson); min-width: 2px; }
+  .bar-wrap { background: var(--rule-2); width: 64px; }
+  .decision { font-size: 14px; font-style: italic; color: var(--muted); white-space: nowrap; }
+  .decision.kept { color: var(--crimson-ink); font-style: normal; font-weight: 600; }
+
+  /* Trial by combat */
+  .verdict { text-align: center; font-style: italic; color: var(--ink-2); margin: 0 0 14px; }
+  .compare { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 22px; }
+  .compare .panel { margin: 0; }
+
+  footer { text-align: center; color: var(--muted); font-size: 15px; margin-top: 30px; }
+  footer .mark { display: block; font: 600 12px var(--display); letter-spacing: .18em; text-transform: uppercase; color: var(--gold-ink); margin-bottom: 4px; }
+  footer b { color: var(--ink-2); font-weight: 600; font-variant-numeric: tabular-nums lining-nums; }
+
+  #tip { position: fixed; pointer-events: none; background: var(--paper); color: var(--ink); border: 1px solid var(--rule); box-shadow: 0 6px 16px -8px rgba(90,60,20,.35); font-size: 14px; padding: 5px 9px; border-radius: 2px; max-width: 300px; z-index: 10; display: none; }
+  [hidden] { display: none !important; }
+
+  /* Westeros touches */
+  .compass { position: fixed; top: 90px; right: -70px; width: 340px; height: 340px; z-index: -1; opacity: .5; pointer-events: none; }
+  .banners { position: absolute; top: 0; left: 0; right: 0; pointer-events: none; }
+  .banners svg { position: absolute; top: 0; width: 78px; height: 200px; filter: drop-shadow(0 6px 8px rgba(120,90,40,.15)); }
+  .banners .l { left: -112px; } .banners .r { right: -112px; }
+  @media (max-width: 1370px) { .banners { display: none; } }
+  .seal { display: inline-block; width: 18px; height: 18px; vertical-align: -4px; margin-right: 5px;
+    background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='10' fill='%23e3aea2' stroke='%23d49a8e' stroke-width='3' stroke-dasharray='2 1.4'/%3E%3Ccircle cx='12' cy='12' r='6.6' fill='none' stroke='%23fff3ea' stroke-width='.9'/%3E%3Cpath d='M8 14l1-4 2 2 1-3 1 3 2-2 1 4z' fill='%23fff3ea'/%3E%3C/svg%3E") center/contain no-repeat; }
+  .swords { display: block; width: 46px; height: 46px; margin: 0 auto 4px;
+    background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64' fill='none' stroke='%23b08f55' stroke-linecap='round'%3E%3Cpath d='M17 47L54 10' stroke-width='3'/%3E%3Cpath d='M47 47L10 10' stroke-width='3'/%3E%3Cpath d='M11 41l12 12M41 53l12-12' stroke-width='3.5'/%3E%3Cpath d='M17 47l-7 7M47 47l7 7' stroke-width='4'/%3E%3Ccircle cx='8.5' cy='55.5' r='2.6' fill='%23d49a8e' stroke='none'/%3E%3Ccircle cx='55.5' cy='55.5' r='2.6' fill='%23d49a8e' stroke='none'/%3E%3C/svg%3E") center/contain no-repeat; }
+  .awaiting { text-align: center; padding: 26px 16px 10px; color: var(--muted); font-style: italic; }
+  .awaiting img { width: 86px; opacity: .55; display: block; margin: 0 auto 10px; }
+  footer .epigraph { display: block; font-style: italic; color: var(--ink-2); margin-bottom: 10px; font-size: 17px; }
+
+  @media (max-width: 800px) {
+    .compare { grid-template-columns: minmax(0, 1fr); }
+    .panel { padding: 20px 18px; }
+    .backdrop { height: 150px; }
+  }
+</style>
+</head>
+<body>
+<!-- Original artwork: a castle on a sea cliff, drawn in soft parchment tones -->
+<!-- Original map-style compass rose, faint in the background -->
+<svg class="compass" viewBox="-100 -100 200 200" aria-hidden="true" fill="none" stroke="#d8c59c">
+  <circle r="92" stroke-width="1"/><circle r="86" stroke-width=".6"/><circle r="40" stroke-width=".6" stroke-dasharray="2 3"/>
+  <g stroke-width=".8">
+    <path d="M0-80L12 0 0 80-12 0z" fill="#efe3c8"/><path d="M-80 0L0-12 80 0 0 12z" fill="#efe3c8"/>
+    <path d="M-50-50L7 0 50 50-7 0z" transform="rotate(0)" opacity=".7"/><path d="M50-50L0 7-50 50 0-7z" opacity=".7"/>
+  </g>
+  <text y="-95" text-anchor="middle" fill="#cdb88a" stroke="none" font-family="Cinzel, serif" font-size="12">N</text>
+</svg>
+<div class="backdrop" aria-hidden="true">
+  <svg viewBox="0 0 1440 240" preserveAspectRatio="xMidYMax slice">
+    <path fill="#efe5cf" d="M0 240V178l90-14 70 10 90-30 80 8 70-26 60 12 50-22h60l40 10 60-16 70 18 80-10 60 22 90-12 70 26 90-8 90 20 60-6 70 16v74z"/>
+    <g fill="#e7dabd">
+      <path d="M0 240V196l120-10 90 12 110-40 60 4 50-40 40 6 30-30 16 0 0-40h8v-8h6v8h6v-8h6v8h8v40l10 0 0-66h8v-9h7v9h7v-9h7v9h7v-9h8v66l10 0 0-84h10v-11h8v11h8v-11h8v11h8v-11h10v84l10 0 0-56h8v-9h7v9h7v-9h7v9h8v56l16 0 40 34 50 8 60 36 90-6 80 22 110-4 100 20 124-6v60z"/>
+      <rect x="639" y="0" width="2" height="12"/><path d="M641 0l20 5-20 5z"/>
+    </g>
+    <path fill="#e2d3b3" d="M0 240v-26c120 8 220-6 330 2 140 10 240-10 380-4 150 6 240 14 380 4 130-9 230 4 350 0v24z"/>
+  </svg>
+</div>
+
+<main style="position: relative">
+  <!-- Hanging house banners (CC0 heraldic lion on rose cloth); only on wide screens -->
+  <div class="banners" aria-hidden="true">
+    <svg class="l" viewBox="0 0 80 200"><rect x="2" y="4" width="76" height="5" rx="2.5" fill="#c9a052"/><circle cx="3" cy="6.5" r="4" fill="#c9a052"/><circle cx="77" cy="6.5" r="4" fill="#c9a052"/><path d="M9 9h62v172l-31-22-31 22z" fill="#f1d3ca" stroke="#c9a458" stroke-width="2"/><path d="M14 14h52v158l-26-18-26 18z" fill="none" stroke="#fff4ea" stroke-width="1"/><image href="lion.svg" x="15" y="42" width="50" height="62"/></svg>
+    <svg class="r" viewBox="0 0 80 200"><rect x="2" y="4" width="76" height="5" rx="2.5" fill="#c9a052"/><circle cx="3" cy="6.5" r="4" fill="#c9a052"/><circle cx="77" cy="6.5" r="4" fill="#c9a052"/><path d="M9 9h62v172l-31-22-31 22z" fill="#f1d3ca" stroke="#c9a458" stroke-width="2"/><path d="M14 14h52v158l-26-18-26 18z" fill="none" stroke="#fff4ea" stroke-width="1"/><image href="lion.svg" x="15" y="42" width="50" height="62" transform="translate(80 0) scale(-1 1)"/></svg>
+  </div>
+  <header class="banner">
+    <div class="house">
+      <!-- Crest: rose shield with the CC0 heraldic lion rampant (frontend/lion.svg) -->
+      <svg class="crest" viewBox="0 0 58 70" aria-hidden="true">
+        <path d="M4 6h50v26c0 18-11 29-25 35C15 61 4 50 4 32z" fill="#f1d3ca" stroke="#c9a458" stroke-width="2.5"/>
+        <path d="M9 11h40v21c0 14-9 23-20 28C18 55 9 46 9 32z" fill="none" stroke="#fffaf0" stroke-width="1"/>
+        <image href="lion.svg" x="12" y="12" width="34" height="42"/>
+      </svg>
+      <div>
+        <h1>Team Lannisters</h1>
+        <p class="sub">Biomedical named-entity recognition <span class="motto">· hear our spans roar</span></p>
+      </div>
+    </div>
+    <div class="raven">
+      <label for="api">Backend · where to send the raven</label>
+      <input id="api" type="url" placeholder="https://xxxx.trycloudflare.com">
+      <button id="connect" class="btn">Send raven</button>
+      <span class="status"><span id="dot" class="dot"></span><span id="status">no raven sent yet</span></span>
+    </div>
+  </header>
+
+  <section class="panel">
+    <h2><label for="text">The Sentence</label></h2>
+    <p class="lede">Choose a passage from the test archive, or write your own.</p>
+    <textarea id="text" maxlength="2000" placeholder="Paste a biomedical sentence…">Mutations in the BRCA1 gene cause hereditary breast and ovarian cancer.</textarea>
+    <div id="chips" class="chips"></div>
+    <div class="row" style="justify-content: space-between; gap: 16px">
+      <div class="seg" role="group" aria-label="Model">
+        <button data-mode="span" aria-pressed="true">Span model</button>
+        <button data-mode="baseline" aria-pressed="false">Baseline</button>
+        <button data-mode="compare" aria-pressed="false">Trial by combat</button>
+      </div>
+      <button id="go" class="btn primary">Analyze</button>
+    </div>
+    <div id="err" class="error" hidden></div>
+  </section>
+
+  <div id="out"><div class="awaiting"><img src="lion.svg" alt="">Awaiting your command. Choose a passage and press Analyze.</div></div>
+
+  <footer><span class="epigraph">“When you play the game of spans, you win or you tag O.”</span><span class="mark">Forged by Team Lannisters · Casterly Rock</span><span id="foot">Send a raven to the backend to see model details.</span></footer>
+</main>
+<div id="tip"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+let API = "", mode = "span", health = null, reqId = 0;
+
+// Build DOM nodes without innerHTML, so user text can never inject markup
+function el(tag, attrs = {}, ...kids) {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) if (v != null && v !== false) n.setAttribute(k, v);
+  for (const k of kids.flat()) if (k != null) n.append(k);
+  return n;
+}
+const fmt = p => p.toFixed(2);
+const heat = p => `color-mix(in oklab, var(--heat-hi) ${Math.round(p * 100)}%, var(--heat-lo))`;
+const shortTag = t => t === "O" ? "O" : t[0];            // B-Disease -> B, I-Disease -> I
+
+async function api(path, body) {
+  const res = await fetch(API + path, body ? {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  } : {});
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({}));
+    throw new Error(typeof detail.detail === "string" ? detail.detail : `${res.status} ${res.statusText}`);
+  }
+  return res.json();
+}
+
+function showError(e) { $("#err").textContent = e ? String(e.message || e) : ""; $("#err").hidden = !e; }
+
+// ---------- connect ----------
+async function connect() {
+  API = $("#api").value.trim().replace(/\/+$/, "");
+  try { localStorage.setItem("bioner-api", API); } catch {}
+  $("#status").textContent = "raven in flight…"; $("#dot").className = "dot";
+  try {
+    health = await api("/health");
+    $("#status").textContent = `raven returned · ${health.device}`; $("#dot").className = "dot on";
+    showError(null);
+    renderFooter();
+  } catch (e) {
+    health = null;
+    $("#status").textContent = "no raven returned";
+    showError(`The raven did not return from ${API || "(empty URL)"}: ${e.message}`);
+    return;
+  }
+  try {                                           // example chips are optional
+    const { examples } = await api("/examples");
+    $("#chips").replaceChildren(...examples.map(t => {
+      const b = el("button", { class: "chip", title: t }, t);
+      b.onclick = () => { $("#text").value = t; analyze(); };
+      return b;
+    }));
+  } catch {}
+}
+
+function renderFooter() {
+  const f = health.val_f1;
+  $("#foot").replaceChildren(
+    `Encoder ${health.model_name} · validation span F1: baseline `, el("b", {}, f.baseline.toFixed(4)),
+    " · span model ", el("b", {}, f.span.toFixed(4)),
+    ` · threshold ${health.threshold} · all inference runs on our own models (Kaggle ${health.device})`);
+}
+
+// ---------- analyze ----------
+async function analyze() {
+  const text = $("#text").value.trim();
+  if (!text) return;
+  if (!health) { await connect(); if (!health) return; }
+  const my = ++reqId, m = mode;          // only the newest request may draw its result
+  $("#go").disabled = true; $("#go").textContent = "The maesters deliberate…"; showError(null);
+  try {
+    const d = m === "compare" ? await api("/compare", { text }) : await api("/predict", { text, model: m });
+    if (my === reqId) m === "compare" ? renderCompare(d) : renderSingle(d);
+  } catch (e) { if (my === reqId) showError(e); }
+  finally { if (my === reqId) { $("#go").disabled = false; $("#go").textContent = "Analyze"; } }
+}
+
+// Sentence with highlighted entities and the BIO tag under each word
+function sentence(tokens, tags, entities, diff = new Set()) {
+  const owner = {};
+  for (const e of entities) for (let i = e.start; i <= e.end; i++) owner[i] = e;
+  return el("div", { class: "sent" }, tokens.map((w, i) => {
+    const e = owner[i];
+    const cls = ["tok", e && "ent", e && i === e.start && "first", e && i === e.end && "last",
+                 e && i > e.start && i < e.end && "mid", diff.has(i) && "diff"].filter(Boolean).join(" ");
+    const tip = [e && `“${e.text}” · score ${fmt(e.score)}`, diff.has(i) && "models disagree here"]
+                  .filter(Boolean).join(" · ");
+    return el("span", { class: cls, "data-tip": tip || null },
+              el("span", { class: "w" }, w), el("span", { class: "t" }, shortTag(tags[i])));
+  }));
+}
+
+function entityChips(entities) {
+  if (!entities.length) return el("p", { class: "muted" }, "No disease entities found.");
+  return el("div", { class: "ents" }, entities.map(e =>
+    el("span", { class: "ent-chip" }, e.text, el("b", {}, fmt(e.score)))));
+}
+
+function renderSingle(d) {
+  const title = d.model === "span" ? "Span model" : "Baseline (BIO tagger)";
+  const cards = [el("section", { class: "panel" },
+    el("h2", {}, "The Verdict", el("span", { class: "note" }, title)),
+    sentence(d.tokens, d.tags, d.entities),
+    entityChips(d.entities),
+    el("p", { class: "hint" }, "Under each word: B = B-Disease, I = I-Disease, O = outside. Hover an entity for its score."))];
+  if (d.model === "span") cards.push(spanView(d));
+  $("#out").replaceChildren(...cards);
+}
+
+// ---------- span view: start x end heatmap + top candidates ----------
+function spanView(d) {
+  const W = d.grid.length, L = d.grid[0]?.length ?? 0;
+  const chosen = new Set(d.entities.map(e => `${e.start}-${e.end}`));
+  const grid = el("div", { class: "heat", style: `grid-template-columns: max-content repeat(${W}, 20px)` });
+  grid.append(el("span"));                                   // top-left corner
+  for (let e = 0; e < W; e++) grid.append(el("span", { class: "cl", title: d.tokens[e] }, d.tokens[e]));
+  for (let s = 0; s < W; s++) {
+    grid.append(el("span", { class: "rl", title: d.tokens[s] }, d.tokens[s]));
+    for (let e = 0; e < W; e++) {
+      const k = e - s, p = k >= 0 && k < L ? d.grid[s][k] : null;
+      if (p == null) { grid.append(el("span", { class: "c na" })); continue; }
+      const phrase = d.tokens.slice(s, e + 1).join(" ");
+      grid.append(el("span", {
+        class: `c v${chosen.has(`${s}-${e}`) ? " sel" : ""}`, style: `background:${heat(p)}`,
+        "data-tip": `“${phrase}” (words ${s}–${e}) · P(disease) = ${p.toFixed(3)}`,
+      }));
+    }
+  }
+  const t = d.threshold;
+  const legend = el("div", { class: "legend" },
+    "P(disease) 0", el("span", { class: "ramp" }, el("i", { style: `left: calc(${t * 100}% - 1px)` })), "1",
+    el("span", { class: "muted" }, `│ marker = threshold ${t}`),
+    el("span", { class: "swatch-sel" }), "selected entity");
+
+  // Candidate table: why each top span was kept or dropped by the decoder
+  const rows = d.candidates.map((c, i) => {
+    const kept = chosen.has(`${c.start}-${c.end}`);
+    const why = kept ? "kept" : c.score >= t ? "overlaps a kept span" : "below threshold";   // overlap = shares a word with a higher kept span
+    return el("tr", {},
+      el("td", { class: "num" }, String(i + 1)),
+      el("td", {}, c.text, el("div", { class: "muted" }, `words ${c.start}–${c.end}`)),
+      el("td", {}, el("div", { class: "bar-wrap" }, el("div", { class: "bar", style: `width:${c.score * 100}%` }))),
+      el("td", { class: "num" }, fmt(c.score)),
+      el("td", { class: `decision${kept ? " kept" : ""}` }, kept ? el("span", { class: "seal" }) : null, why));
+  });
+  const table = el("table", {},
+    el("thead", {}, el("tr", {}, el("th", {}, "#"), el("th", {}, "Candidate span"), el("th", {}, "Score"),
+                                  el("th", {}, ""), el("th", {}, "Decoder"))),
+    el("tbody", {}, rows));
+
+  return el("section", { class: "panel" },
+    el("h2", {}, "The Span Ledger"),
+    el("p", { class: "lede" }, "Every phrase the model weighed, and what the decoder kept."),
+    el("div", { class: "span-view" },
+      el("div", { class: "hm" },
+        el("div", { class: "axis" }, "Row = first word · column = last word"),
+        el("div", { class: "scroll" }, grid), legend),
+      el("div", { class: "tb" }, el("div", { class: "axis" }, `Top ${d.candidates.length} candidates`),
+        el("div", { class: "scroll" }, table))));
+}
+
+// ---------- compare ----------
+function renderCompare(d) {
+  const diff = new Set(d.disagree);
+  const f1 = health?.val_f1 ?? {};
+  const side = (title, r, key) => el("section", { class: "panel" },
+    el("h2", {}, title, f1[key] != null ? el("span", { class: "note" }, `val F1 ${f1[key].toFixed(4)}`) : null),
+    sentence(d.tokens, r.tags, r.entities, diff), entityChips(r.entities));
+  const summary = diff.size
+    ? `The models disagree on ${diff.size} word${diff.size > 1 ? "s" : ""} (dashed outline).`
+    : "Both models produce identical tags for this sentence.";
+  $("#out").replaceChildren(
+    el("span", { class: "swords", "aria-hidden": "true" }),
+    el("p", { class: "verdict" }, summary),
+    el("div", { class: "compare" }, side("Baseline (BIO tagger)", d.baseline, "baseline"),
+                                     side("Span model", d.span, "span")));
+}
+
+// ---------- wiring ----------
+document.querySelectorAll(".seg button").forEach(b => b.onclick = () => {
+  mode = b.dataset.mode;
+  document.querySelectorAll(".seg button").forEach(x => x.setAttribute("aria-pressed", x === b));
+  if (health && $("#text").value.trim()) analyze();
+});
+$("#go").onclick = analyze;
+$("#connect").onclick = connect;
+$("#text").addEventListener("keydown", e => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) analyze(); });
+
+// One shared tooltip for words and heatmap cells
+const tip = $("#tip");
+document.addEventListener("mouseover", e => {
+  const t = e.target.closest("[data-tip]");
+  if (t) { tip.textContent = t.dataset.tip; tip.style.display = "block"; } else tip.style.display = "none";
+});
+document.addEventListener("mousemove", e => {
+  tip.style.left = Math.min(e.clientX + 12, innerWidth - tip.offsetWidth - 8) + "px";
+  tip.style.top = e.clientY + 14 + "px";
+});
+
+// Backend URL: ?api=... wins, else the last one used on this browser
+const saved = new URLSearchParams(location.search).get("api") ?? (() => { try { return localStorage.getItem("bioner-api"); } catch { return null; } })();
+if (saved) { $("#api").value = saved; connect(); }
+</script>
+</body>
+</html>

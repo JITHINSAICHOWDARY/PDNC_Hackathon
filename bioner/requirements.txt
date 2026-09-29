@@ -1,0 +1,7 @@
+torch
+transformers
+seqeval
+pandas
+fastapi
+uvicorn
+scikit-learn
